@@ -124,38 +124,6 @@ def analyze_import(save_df: pd.DataFrame, import_df: pd.DataFrame, id_col: str):
 
     return updated_df, rows_added
 
-def export_id_col(save_df: pd.DataFrame, id_col: str):
-    if save_df.empty or not id_col:
-        return False
-
-    if id_col not in save_df.columns:
-        return False
-
-    master_path = MASTER_LIST_FILE
-
-    # Prepare ID column
-    new_col_df = (save_df[id_col].astype(str).str.strip().replace("", pd.NA).dropna().drop_duplicates().reset_index(drop=True).to_frame(name=id_col))
-
-    # If file exists then append/replace column
-    if master_path.exists():
-        existing_df = read_csv(master_path)
-
-        # Align row counts
-        max_len = max(len(existing_df), len(new_col_df))
-        existing_df = existing_df.reindex(range(max_len))
-        new_col_df = new_col_df.reindex(range(max_len))
-
-        # Replace existing column if it exists
-        if id_col in existing_df.columns:
-            existing_df = existing_df.drop(columns=[id_col])
-
-        master_df = pd.concat([existing_df, new_col_df], axis=1)
-
-    else:
-        master_df = new_col_df
-
-    save_csv(master_df, master_path)
-    return True
 
 def other_run_page(title, base_file):
     st.title(title)
@@ -269,8 +237,8 @@ def aes_run_page(title, base_file):
 
 # Mapping ITN to data in Doc Search
 def itn_doc_mapping():
-    if not AES_FILE.exists() or not DOC_SEARCH_FILE.exists():
-        return False, "AES or Doc Search file is missing.", pd.DataFrame()
+    if not AES_FILE.exists() or not DOC_SEARCH_FILE.exists() or not AUDIT_DOC_FILE.exists():
+        return False, "AES or Doc Search or Audit Doc file is missing.", pd.DataFrame()
 
     aes_df = load_save(AES_FILE)
     doc_df = load_save(DOC_SEARCH_FILE)
@@ -330,17 +298,7 @@ def update_master_from_current_page(page_key):
     else:
         updated_df = load_save(base_file)
 
-    if updated_df.empty:
-        st.session_state["master_message"] = "No data found."
-        st.session_state["master_message_type"] = "warning"
-        return
-
     # Load Doc Search
-    if not DOC_SEARCH_FILE.exists():
-        st.session_state["master_message"] = "Doc Search file is missing."
-        st.session_state["master_message_type"] = "error"
-        return
-
     doc_df = load_save(DOC_SEARCH_FILE)
     ITN_COL = next((col for col in doc_df.columns if col.lower() == "itn"), None)
 
@@ -513,22 +471,23 @@ def master_list_doc_ready(master_df: pd.DataFrame):
     return df, doc_not_ready_df, doc_not_ready_itns
 
 def find_unmapped_sli(gts_sli_df: pd.DataFrame, sli_map_df: pd.DataFrame):
-    SLI_COL = next((col for col in sli_map_df.columns if col.lower() == "sli"),None)
-    SLI_COL = next((col for col in gts_sli_df.columns if col.lower() == "sli"), None)
-    gts_sli_df[SLI_COL] = gts_sli_df[SLI_COL].astype(str).str.strip()
-    sli_map_df[SLI_COL] = sli_map_df[SLI_COL].astype(str).str.strip()
+    if gts_sli_df.empty or sli_map_df.empty:
+        return False, "GTS SLI or SLI Map file is missing.", pd.DataFrame()
 
-    # Build lookup set from SLI Map
-    mapped_sli_set = (
-        sli_map_df[SLI_COL].replace("", pd.NA).dropna().drop_duplicates()
-    )
+    MAP_SLI_COL = next((col for col in sli_map_df.columns if col.lower() == "sli"), None)
+    GTS_SLI_COL = next((col for col in gts_sli_df.columns if col.lower() == "sli"), None)
 
-    # Identify unmapped SLIs
-    unmapped_sli_df = (
-        gts_sli_df[~gts_sli_df[SLI_COL].isin(mapped_sli_set)][[SLI_COL]].drop_duplicates().reset_index(drop=True)
-    )
+    if not MAP_SLI_COL or not GTS_SLI_COL:
+        return False, "SLI column missing in one of the files.", pd.DataFrame()
 
-    return unmapped_sli_df
+    gts_sli_df[GTS_SLI_COL] = gts_sli_df[GTS_SLI_COL].astype(str).str.strip()
+    sli_map_df[MAP_SLI_COL] = sli_map_df[MAP_SLI_COL].astype(str).str.strip()
+
+    mapped_sli_set = (sli_map_df[MAP_SLI_COL].replace("", pd.NA).dropna().drop_duplicates())
+
+    unmapped_sli_df = (gts_sli_df[~gts_sli_df[GTS_SLI_COL].isin(mapped_sli_set)][[GTS_SLI_COL]].drop_duplicates().reset_index(drop=True))
+
+    return True, "", unmapped_sli_df
 
 # UI. Start here
 def main():
@@ -647,7 +606,7 @@ def main():
             summary_df = df[["ITN", "Doc ready status", "Audit ready status"]].drop_duplicates()  
             gts_sli_df = load_save(GTS_FILE)
             sli_map_df = load_save(SLI_MAP_FILE)
-            unmapped_sli_df = find_unmapped_sli(gts_sli_df, sli_map_df)
+            success, message, unmapped_sli_df = find_unmapped_sli(gts_sli_df, sli_map_df)
 
             st.subheader("ITN Readiness Summary")
             st.dataframe(summary_df, use_container_width = True)
@@ -668,12 +627,15 @@ def main():
                 st.success("All ITNs have data in Doc Search")
 
             st.subheader("Unmapped SLI in GTS-SLI")
-            st.dataframe(unmapped_sli_df, use_container_width=True)
-            if not unmapped_sli_df.empty:
-                st.warning(f"{len(unmapped_sli_df)} SLIs in GTS-SLI are not mapped in SLI Map")
+            if not success:
+                st.warning(message)
             else:
-                st.success("All SLIs in GTS-SLI are mapped to an ITN in SLI Map")
-
+                st.dataframe(unmapped_sli_df, use_container_width=True)
+               
+                if not unmapped_sli_df.empty:
+                    st.warning(f"{len(unmapped_sli_df)} SLIs in GTS-SLI are not mapped in SLI Map")
+                else:
+                    st.success("All SLIs in GTS-SLI are mapped in SLI map")
 
 if __name__ == "__main__":
     main()

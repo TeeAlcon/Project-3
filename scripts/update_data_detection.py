@@ -2,17 +2,25 @@ from pathlib import Path
 import hashlib
 
 import pandas as pd
-import streamlit as st
 
 # Utility
-AES_FILE = Path("Updated Report") / "ACE Report Update.csv"
+AES_FILE = Path("Updated Report") / "AES Report.csv"
 GTS_FILE = Path("Updated Report") / "GTS SLI.csv"
-SLI_MAP_FILE = Path("Updated Report") / "SLI map.csv"
+SLI_MAP_FILE = Path("Updated Report") / "SLI Map.csv"
 SEA_EXPORT_FILE = Path("Updated Report") / "Sea Export Date.csv"
 DOC_SEARCH_FILE = Path("Updated Report") / "Doc Search.csv"
 AUDIT_DOC_FILE = Path("Updated Report") / "Audit Doc.csv"
 MASTER_LIST_FILE = Path("Updated Report") / "Master List.csv"
 Path("Updated Report").mkdir(parents=True, exist_ok=True)
+
+REQUIRED_COLS_FOR_CONFIG = {
+    AES_FILE: {"ITN", "Shipment Reference Number", "Filer Name"},
+    GTS_FILE: {"SLI"},
+    SLI_MAP_FILE: {"ITN", "Invoice type", "Invoice number"},
+    SEA_EXPORT_FILE: {"ITN", "Container Number"},
+    DOC_SEARCH_FILE: {"ITN", "Total PDF count", "SLI file count", "AVL file count", "Packing-List file count", "AWB file count", "SWB file count"},
+    AUDIT_DOC_FILE: {"ITN", "Value Diff", "Qty Diff"},
+}
 
 # Turn CSV to pandas DataFrame + turn columns to text
 def read_csv(file_or_path) -> pd.DataFrame:
@@ -124,12 +132,68 @@ def analyze_import(save_df: pd.DataFrame, import_df: pd.DataFrame, id_col: str):
 
     return updated_df, rows_added
 
+def find_map_sli_not_in_gts(gts_sli_df: pd.DataFrame, sli_map_df: pd.DataFrame):
+    if gts_sli_df.empty or sli_map_df.empty:
+        return False, "GTS SLI or SLI Map file is missing.", pd.DataFrame()
+
+    GTS_SLI_COL = next((col for col in gts_sli_df.columns if col.lower() == "sli"), None)
+
+    invoice_type_col = next((col for col in sli_map_df.columns if col.lower() == "invoice type"), None)
+    invoice_number_col = next((col for col in sli_map_df.columns if col.lower() == "invoice number"), None)
+
+    # Extract only SLI records
+    sli_df = sli_map_df[sli_map_df[invoice_type_col].astype(str).str.strip().str.upper().eq("SLI")].copy()
+
+    gts_sli_df[GTS_SLI_COL] = (gts_sli_df[GTS_SLI_COL].astype(str).str.strip())
+
+    sli_df[invoice_number_col] = (sli_df[invoice_number_col].astype(str).str.strip())
+
+    mapped_sli_set = (gts_sli_df[GTS_SLI_COL].replace("", pd.NA).dropna().drop_duplicates())
+
+    unmapped_sli_df = (
+        sli_df[~sli_df[invoice_number_col].isin(mapped_sli_set)][[invoice_number_col]].drop_duplicates().rename(columns={invoice_number_col: "SLI"}).reset_index(drop=True)
+    )
+
+    return True, "", unmapped_sli_df
+
+def find_itns_with_duplicate_slis(sli_map_df: pd.DataFrame):
+    if sli_map_df.empty:
+        return []
+
+    itn_col = next((col for col in sli_map_df.columns if col.lower() == "itn"), None)
+
+    invoice_type_col = next((col for col in sli_map_df.columns if col.lower() == "invoice type"),None)
+    invoice_number_col = next((col for col in sli_map_df.columns if col.lower() == "invoice number"), None)
+
+    if not itn_col or not invoice_type_col or not invoice_number_col:
+        return []
+
+    # Keep only SLI records
+    df = sli_map_df[sli_map_df[invoice_type_col].astype(str).str.strip().str.upper().eq("SLI")][[itn_col, invoice_number_col]].copy()
+
+    df[itn_col] = df[itn_col].astype(str).str.strip()
+    df[invoice_number_col] = df[invoice_number_col].astype(str).str.strip()
+
+    # Find SLIs assigned to multiple ITNs
+    duplicate_slis = (df.groupby(invoice_number_col)[itn_col].nunique().loc[lambda s: s > 1].index)
+
+    # Return affected ITNs
+    duplicate_itns = (df[df[invoice_number_col].isin(duplicate_slis)][itn_col].drop_duplicates().tolist())
+
+    return duplicate_itns, duplicate_slis
+
 def build_master_list():
     if not AES_FILE.exists():
-        return False, "AES file is missing.", pd.DataFrame()
+        return False, "AES file is missing. Do not proceed until attaining the file", pd.DataFrame()
 
     if not DOC_SEARCH_FILE.exists():
-        return False, "Doc Search file is missing.", pd.DataFrame()
+        return False, "Doc Search is missing. Do not proceed until attaining the file", pd.DataFrame()
+   
+    if not SEA_EXPORT_FILE.exists():
+        return False, "Sea Export is missing. Do not proceed until attaining the file", pd.DataFrame()
+   
+    if not AUDIT_DOC_FILE.exists():
+        return False, "Audit Doc is missing. Do not proceed until attaining the file", pd.DataFrame()
 
     aes_df = load_save(AES_FILE)
     doc_df = load_save(DOC_SEARCH_FILE)
@@ -155,8 +219,6 @@ def build_master_list():
 
     # Merge AES with Doc Search
     master_df = aes_df.merge(doc_df, on=ITN_COL, how="left")
-
-    # Save Master List
     save_csv(master_df.drop_duplicates(),MASTER_LIST_FILE)
 
     # Find ITNs with no Doc Search data
@@ -173,7 +235,7 @@ def build_master_list():
     else:
         fail_match_df = pd.DataFrame(columns=[ITN_COL])
 
-    return (True,"Master List updated with Doc Search data.",fail_match_df)
+    return (True,"Master List updated with Doc Search and Audit data",fail_match_df)
 
 def master_list_doc_ready(master_df: pd.DataFrame):
     if master_df.empty:
@@ -186,6 +248,7 @@ def master_list_doc_ready(master_df: pd.DataFrame):
     required_count_cols = [
         "SLI file count",
         "AVL file count",
+        "APL file count",
         "Packing-List file count",
         "AWB file count",
         "SWB file count",
@@ -202,13 +265,19 @@ def master_list_doc_ready(master_df: pd.DataFrame):
 
     # ITN must have at least one Packing-List, AVL, SLI, AWB, or SWB
     has_all_doc = (
-        (df["Packing-List file count"] > 0) & (df["AVL file count"] > 0) & (df["SLI file count"] > 0) & ((df["AWB file count"] > 0) | (df["SWB file count"] > 0))
+        (df["Packing-List file count"] > 0) & (df["AVL file count"] > 0) & (df["APL file count"] > 0) & (df["SLI file count"] > 0) & ((df["AWB file count"] > 0) | (df["SWB file count"] > 0))
     )
 
     # Number of AVL, Packing-List, and SLI must match
     counts_match = (
         (df["AVL file count"] == df["Packing-List file count"]) & (df["AVL file count"] == df["SLI file count"])
     )
+   
+    # ITNs with duplicated SLI check
+   
+    duplicate_itns, duplicate_slis = find_itns_with_duplicate_slis(load_save(SLI_MAP_FILE))
+
+    itn_with_duplicated_sli_with_other = (df[ITN_COL].astype(str).str.strip().isin(duplicate_itns))
 
     # ITN have swb must be in Sea Export
     swb_exist = df["SWB file count"] > 0
@@ -225,32 +294,35 @@ def master_list_doc_ready(master_df: pd.DataFrame):
     swb_check = (~swb_exist) | (swb_exist & swb_valid)
 
     # Final ready/not_ready result
-    df["Doc status"] = "not_ready"
-    df.loc[has_all_doc & counts_match & swb_check, "Doc status"] = "ready"
+    df["Document status"] = "Fail"
+    df.loc[has_all_doc & counts_match & swb_check & ~itn_with_duplicated_sli_with_other, "Document status"] = "Pass"
 
-    # Reason for Doc ready status = not_ready
+    # Reason for Doc status = Fail
     df["Missing AVL"] = df["AVL file count"] == 0
     df["Missing Packing List"] = df["Packing-List file count"] == 0
     df["Missing SLI"] = df["SLI file count"] == 0
+    df["Missing APL"] = df["APL file count"] == 0
     df["Missing AWB/SWB"] = (df["AWB file count"] == 0) & (df["SWB file count"] == 0)
     df["Number of document doesn't match"] = ~counts_match
     df["ITN with swb not in Sea Export"] = swb_exist & ~swb_valid
-   
+    df["ITN with duplicated SLI with another ITN"] = itn_with_duplicated_sli_with_other
 
     error_cols = [
     col for col in [
         ITN_COL,
         "Missing SLI",
         "Missing AVL",
+        "Missing APL",
         "Missing Packing List",
         "Missing AWB/SWB",
         "Number of document doesn't match",
-        "ITN with swb not in Sea Export"
+        "ITN with swb not in Sea Export",
+        "ITN with duplicated SLI with another ITN"
         ]
     if col in df.columns]
 
     doc_not_ready_df = (
-        df.loc[df["Doc status"] == "not_ready", error_cols].drop_duplicates().reset_index(drop=True)
+        df.loc[df["Document status"] == "Fail", error_cols].drop_duplicates().reset_index(drop=True)
     )
 
     doc_not_ready_itns = (
@@ -263,10 +335,9 @@ def master_list_doc_ready(master_df: pd.DataFrame):
         .tolist()
     )
 
-   
-    # Audit check (change the logic/ default)
-    audit_not_ready_df = pd.DataFrame()
-    audit_not_ready_itns = []
+    # Audit check
+    audit_ready_df = pd.DataFrame()
+    audit_ready_itns = []
 
     if AUDIT_DOC_FILE.exists():
         audit_df = load_save(AUDIT_DOC_FILE)
@@ -274,8 +345,8 @@ def master_list_doc_ready(master_df: pd.DataFrame):
 
         if not audit_df.empty:
             audit_itn_col = next((col for col in audit_df.columns if col.lower() == "itn"), None)
-            audit_value_diff_col = next((col for col in audit_df.columns if col.lower() ==  "value diff"), None)
-            audit_qty_diff_col =  next((col for col in audit_df.columns if col.lower() == "qty diff"), None)
+            audit_value_diff_col = next((col for col in audit_df.columns if col.lower() ==  "value diff"), None) # must have a "value diff" header column to be considered for audit check
+            audit_qty_diff_col =  next((col for col in audit_df.columns if col.lower() == "qty diff"), None) # must have a "qty diff" header column to be considered for audit
 
             if audit_itn_col and audit_value_diff_col and audit_qty_diff_col:
                 for col in [audit_value_diff_col, audit_qty_diff_col]:
@@ -283,10 +354,10 @@ def master_list_doc_ready(master_df: pd.DataFrame):
            
                 audit_df[audit_value_diff_col] = pd.to_numeric(audit_df[audit_value_diff_col], errors="coerce").fillna(0)
                 audit_df[audit_qty_diff_col] = pd.to_numeric(audit_df[audit_qty_diff_col], errors="coerce").fillna(0)
-                audit_fail = ((audit_df[audit_value_diff_col] >= 100) | (audit_df[audit_qty_diff_col] >= 100))
+                audit_pass = ((audit_df[audit_value_diff_col] < 100) & (audit_df[audit_qty_diff_col] < 100))
 
-                audit_not_ready_df = (
-                    audit_df.loc[audit_fail, [audit_itn_col, audit_value_diff_col, audit_qty_diff_col]].drop_duplicates().reset_index(drop=True)
+                audit_ready_df = (
+                    audit_df.loc[audit_pass, [audit_itn_col, audit_value_diff_col, audit_qty_diff_col]].drop_duplicates().reset_index(drop=True)
                 )
 
                 audit_df[audit_itn_col] = (
@@ -295,8 +366,8 @@ def master_list_doc_ready(master_df: pd.DataFrame):
                     .str.strip()
                 )
 
-                audit_not_ready_itns = (
-                    audit_not_ready_df[audit_itn_col]
+                audit_ready_itns = (
+                    audit_ready_df[audit_itn_col]
                     .astype(str)
                     .str.strip()
                     .replace("", pd.NA)
@@ -305,26 +376,8 @@ def master_list_doc_ready(master_df: pd.DataFrame):
                     .tolist()
                 )
 
-    df["Audit status"] = "ready"
-    df.loc[df[ITN_COL].astype(str).isin(audit_not_ready_itns), "Audit status"] = "not_ready"
+    df["Audit status"] = "Fail"
+    df.loc[df[ITN_COL].astype(str).isin(audit_ready_itns), "Audit status"] = "Pass"
    
-    return df, doc_not_ready_df, doc_not_ready_itns
+    return df, doc_not_ready_df, doc_not_ready_itns, audit_ready_df, audit_ready_itns
 
-def find_unmapped_sli(gts_sli_df: pd.DataFrame, sli_map_df: pd.DataFrame):
-    if gts_sli_df.empty or sli_map_df.empty:
-        return False, "GTS SLI or SLI Map file is missing.", pd.DataFrame()
-
-    MAP_SLI_COL = next((col for col in sli_map_df.columns if col.lower() == "sli"), None)
-    GTS_SLI_COL = next((col for col in gts_sli_df.columns if col.lower() == "sli"), None)
-
-    if not MAP_SLI_COL or not GTS_SLI_COL:
-        return False, "SLI column missing in one of the files.", pd.DataFrame()
-
-    gts_sli_df[GTS_SLI_COL] = gts_sli_df[GTS_SLI_COL].astype(str).str.strip()
-    sli_map_df[MAP_SLI_COL] = sli_map_df[MAP_SLI_COL].astype(str).str.strip()
-
-    mapped_sli_set = (sli_map_df[MAP_SLI_COL].replace("", pd.NA).dropna().drop_duplicates())
-
-    unmapped_sli_df = (gts_sli_df[~gts_sli_df[GTS_SLI_COL].isin(mapped_sli_set)][[GTS_SLI_COL]].drop_duplicates().reset_index(drop=True))
-
-    return True, "", unmapped_sli_df

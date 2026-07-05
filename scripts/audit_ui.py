@@ -129,6 +129,48 @@ def aes_run_page(title, base_file):
 
             st.rerun()
 
+def imports_page():
+    st.title("Import Data")
+
+    IMPORT_FILES = {
+        "aes": ("AES Report Update", AES_FILE),
+        "gts": ("GTS-SLI Update", GTS_FILE),
+        "sli_map": ("SLI Map Update", SLI_MAP_FILE),
+        "sea_export": ("Sea Export Update", SEA_EXPORT_FILE),
+        "doc_search": ("Doc Search Update", DOC_SEARCH_FILE),
+        "audit_doc": ("Audit Doc Update", AUDIT_DOC_FILE),
+    }
+
+    status = []
+
+    for key, (label, path) in IMPORT_FILES.items():
+        df = load_save(path)
+
+        status.append({
+            "Report": label,
+            "Loaded": "Yes" if path.exists() else "No",
+            "Rows": len(df),
+            "Columns": len(df.columns),
+        })
+
+    st.subheader("Current Status")
+    st.dataframe(pd.DataFrame(status), use_container_width=True)
+
+    report_key = st.selectbox(
+        "Select report",
+        list(IMPORT_FILES.keys()),
+        format_func=lambda x: IMPORT_FILES[x][0],
+    )
+
+    title, base_file = IMPORT_FILES[report_key]
+
+    st.divider()
+
+    if report_key == "aes":
+        aes_run_page(title, base_file)
+    else:
+        other_run_page(title, base_file)
+
 # UI. Start here
 def main():
     st.set_page_config(page_title="REPORT UPDATE", layout="wide")
@@ -141,58 +183,62 @@ def main():
           footer {visibility: hidden;}
           .stDeployButton {display:none;}
           .stAppDeployButton {display:none;}
+
+        div.stButton > button {
+          width: 100%;
+          border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+          background-color:
+            color-mix(
+               in srgb,
+               var(--background-color) 92%,
+               currentColor 8%
+            );
+          color:var (--text-color);
+          font-weight: 600;
+          border-radius: 8px;
+          padding: 0.5rem 0.75rem;
+        }
+
+        div.stButton > button:hover {
+          border-color: var(--primary-color);
+          background-color:
+            color-mix(
+               in srgb,
+               var(--primary-color) 12%.
+               var(--background-color)
+            );
+          color: var(--text-color);
+        }
+
+        div.stButton > button:focus {
+          border-color: var(--primary-color);
+          box-shadow: 0 0 0 2px
+            color-mix(
+                in srgb,
+                var(--primary-color) 25%,
+                transparent
+            );
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
-
-    AES_PAGE_FILES = {
-        "aes": ("AES Report Update", AES_FILE)
-    }
-
-    OTHER_PAGE_FILES = {
-        "gts": ("GTS-SLI Update", GTS_FILE),
-        "sli_map": ("SLI Map Update", SLI_MAP_FILE),
-        "sea_export": ("Sea Export Update", SEA_EXPORT_FILE),
-        "doc_search": ("Doc Search Update", DOC_SEARCH_FILE),
-        "audit_doc": ("Audit Doc Update", AUDIT_DOC_FILE),
-    }
 
     MASTER_PAGE = {
         "master": ("Master List Update", MASTER_LIST_FILE)
     }
 
     if "page" not in st.session_state:
-        st.session_state.page = "aes"
+        st.session_state.page = "imports"
 
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+    col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("AES Report Update"):
-            st.session_state.page = "aes"
+        if st.button("AES Report Update", use_container_width = True):
+            st.session_state.page = "imports"
 
     with col2:
-        if st.button("GTS-SLI"):
-            st.session_state.page = "gts"
-
-    with col3:
-        if st.button("SLI Map"):
-            st.session_state.page = "sli_map"
-
-    with col4:
-        if st.button("Sea Export"):
-            st.session_state.page = "sea_export"
-
-    with col5:
-        if st.button("Doc Search"):
-            st.session_state.page = "doc_search"
-
-    with col6:
-        if st.button("Audit Doc"):
-            st.session_state.page = "audit_doc"
-
-    with col7:
-        if st.button("Master"):
+        if st.button("Master", use_container_width = True):
             success, message, fail_match_df = build_master_list()
 
             st.session_state["master_success"] = success
@@ -216,13 +262,8 @@ def main():
 
     page_key = st.session_state.page
 
-    if page_key in AES_PAGE_FILES:
-        title, base_file = AES_PAGE_FILES[page_key]
-        aes_run_page(title, base_file)
-
-    elif page_key in OTHER_PAGE_FILES:
-        title, base_file = OTHER_PAGE_FILES[page_key]
-        other_run_page(title, base_file)
+    if page_key in "imports":
+        imports_page()
 
     elif page_key in MASTER_PAGE:
         title, base_file = MASTER_PAGE[page_key]
@@ -234,7 +275,7 @@ def main():
             st.info("Master List is empty.")
         else:
             df, doc_not_ready_df, doc_not_ready_itns = master_list_doc_ready(master_df)
-            summary_df = (df[["ITN", "Doc ready status", "Audit ready status"]].drop_duplicates())
+            summary_df = (df[["ITN", "Doc status", "Audit status"]].drop_duplicates())
             gts_sli_df = load_save(GTS_FILE)
             sli_map_df = load_save(SLI_MAP_FILE)
             success, message, unmapped_sli_df = (find_unmapped_sli(gts_sli_df,sli_map_df))
@@ -242,7 +283,7 @@ def main():
             st.subheader("ITN Readiness Summary")
             st.dataframe(summary_df, use_container_width=True)
 
-            st.subheader("Doc not ready ITNs")
+            st.subheader("ITNs failling document audit")
             st.dataframe(doc_not_ready_df, use_container_width=True)
             if doc_not_ready_itns:
                 st.warning(f"{len(doc_not_ready_itns)} ITNs are not ready")
@@ -261,12 +302,11 @@ def main():
             if not success:
                 st.warning(message)
             else:
-                st.dataframe(unmapped_sli_df, use_container_width=True)
-
                 if not unmapped_sli_df.empty:
-                    st.warning(f"{len(unmapped_sli_df)} SLIs in GTS-SLI are not mapped in SLI Map")
+                    st.dataframe(unmapped_sli_df, use_container_width=True)
+                    st.warning(f"{len(unmapped_sli_df)} SLIs in SLI Map are not in GTS")
                 else:
-                    st.success("All SLIs in GTS-SLI are mapped in SLI Map")
+                    st.success("All SLIs in SLI Map are in GTS")
 
 if __name__ == "__main__":
     main()

@@ -225,8 +225,8 @@ def master_list_doc_ready(master_df: pd.DataFrame):
     swb_check = (~swb_exist) | (swb_exist & swb_valid)
 
     # Final ready/not_ready result
-    df["Doc ready status"] = "not_ready"
-    df.loc[has_all_doc & counts_match & swb_check, "Doc ready status"] = "ready"
+    df["Doc status"] = "not_ready"
+    df.loc[has_all_doc & counts_match & swb_check, "Doc status"] = "ready"
 
     # Reason for Doc ready status = not_ready
     df["Missing AVL"] = df["AVL file count"] == 0
@@ -250,7 +250,7 @@ def master_list_doc_ready(master_df: pd.DataFrame):
     if col in df.columns]
 
     doc_not_ready_df = (
-        df.loc[df["Doc ready status"] == "not_ready", error_cols].drop_duplicates().reset_index(drop=True)
+        df.loc[df["Doc status"] == "not_ready", error_cols].drop_duplicates().reset_index(drop=True)
     )
 
     doc_not_ready_itns = (
@@ -305,8 +305,8 @@ def master_list_doc_ready(master_df: pd.DataFrame):
                     .tolist()
                 )
 
-    df["Audit ready status"] = "ready"
-    df.loc[df[ITN_COL].astype(str).isin(audit_not_ready_itns), "Audit ready status"] = "not_ready"
+    df["Audit status"] = "ready"
+    df.loc[df[ITN_COL].astype(str).isin(audit_not_ready_itns), "Audit status"] = "not_ready"
    
     return df, doc_not_ready_df, doc_not_ready_itns
 

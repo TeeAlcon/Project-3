@@ -1,0 +1,4 @@
+pandas>=3.0.3
+playwright>=1.61.0
+pymupdf>=1.28.0
+streamlit>=1.58.0

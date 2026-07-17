@@ -8,7 +8,7 @@ python -m venv .venv
 source .venv/bin/activate     # macOS / Linux
 
 # 2. Install dependencies
-pip install -r requirements.txt
+pip install -r requirement.txt
 
 # 3. Run the app
 streamlit run streamlit/app.py

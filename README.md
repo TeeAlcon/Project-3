@@ -8,7 +8,7 @@ python -m venv .venv
 source .venv/bin/activate     # macOS / Linux
 
 # 2. Install dependencies
-pip install -r requirement.txt
+pip install -r requirements.txt
 
 # 3. Run the app
 streamlit run streamlit/app.py
@@ -19,20 +19,19 @@ App opens at `http://localhost:8501`.
 ## Project Structure
 
 ```
-.streamlit/
+.src/
 components/
 │_  navigation.py
-│_  status_panel.py
 │_  table_styles.py
 
-pages/
+dashboard/               # pages
 │_  audit_page.py
 │_  data_page.py
 │_  master_page.py
 │_  output_page.py
 │_  scrape_page.py
 
-scrape/
+scrape/                  # browser automation for Expeditors
 │_  scrape_doc.py
 │_  combine_scrape.py
 │_  login_popup.py
@@ -40,8 +39,17 @@ scrape/
 ui/
 │_  styles.py
 
-utils/
-│_  updated_data_detection.py - Data processing logic layer
+utils/                   # detecting data change
+│_  file_analyzed.py
+│_  file_utils.py
+│_  find_columns.py
+
+services/                # summary of audit status
+│_  audit_status.py
+│_  build_master_list.py
+│_  document_status.py
+│_  mapping.py
+│_  output.py
 
 app.py - entry point (run this)
 config.py

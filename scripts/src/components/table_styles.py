@@ -15,6 +15,10 @@ def highlight_fail_rows(row):
         "Document Status" in row.index
         and row["Document Status"] == "FAIL"
     )
-    if value_fail or qty_fail or doc_fail or audit_fail:
+    web_scrape = (
+        "Web Scrape Status" in row.index
+        and row["Web Scrape Status"] == "Not Found"
+    )
+    if value_fail or qty_fail or doc_fail or audit_fail or web_scrape:
         return["background-color: #8B0000"] * len(row)
     return [""] * len(row)
